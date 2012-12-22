@@ -1,7 +1,9 @@
+import requests
 import websocket
 from anyjson import dumps, loads
+from datetime import datetime
 from threading import Thread, Event
-from time import sleep
+from time import sleep, mktime
 from urllib import urlopen
 
 
@@ -44,15 +46,72 @@ class BaseNamespace(object):  # pragma: no cover
         print '[Reconnect]', args
 
 
+def make_transport(supportedTransports, allowedTransports, secure, url, sessionID):
+    transportClassMap = {
+        'websocket': WebsocketTransport,
+        'xhr-polling': XhrPollingTransport,
+        }
+    if allowedTransports is None:
+        allowedTransports = ['websocket', 'xhr-polling']
+    for transport in allowedTransports:
+        if transport in supportedTransports and transport in transportClassMap:
+            return transportClassMap[transport](secure, url, sessionID)
+
+
+class WebsocketTransport(object):
+    def __init__(self, secure, url, sessionID):
+        socketURL = '%s://%s/websocket/%s' % (
+            'wss' if secure else 'ws', url, sessionID)
+        self.connection = websocket.create_connection(socketURL)
+
+    def send(self, packet):
+        self.connection.send(packet)
+
+    def close(self):
+        self.connection.close()
+
+    def recv(self):
+        return self.connection.recv()
+
+    def connected(self):
+        return self.connection.connected
+
+class XhrPollingTransport(object):
+    def __init__(self, secure, url, sessionID):
+        self.url = '%s://%s/xhr-polling/%s' % ('https' if secure
+                else 'http', url, sessionID)
+
+    def get_seconds_since_epoch(self):
+        return int(mktime(datetime.now().timetuple()))
+
+    def get_params(self):
+        return {'t':self.get_seconds_since_epoch()}
+
+    def send(self, packet):
+        resp = requests.post(self.url, params=self.get_params(), data=packet)
+        return resp
+
+    def close(self):
+        pass
+
+    def connected(self):
+        return False
+
+    def recv(self):
+        resp = requests.get(self.url, params=self.get_params())
+        return resp.text
+
 class SocketIO(object):
 
     messageID = 0
 
-    def __init__(self, host, port, Namespace=BaseNamespace, secure=False):
+    def __init__(self, host, port, Namespace=BaseNamespace, secure=False,
+            transports=None):
         self.host = host
         self.port = int(port)
         self.namespace = Namespace(self)
         self.secure = secure
+        self.transports = transports
         self.__connect()
 
         heartbeatInterval = self.heartbeatTimeout - 2
@@ -68,7 +127,7 @@ class SocketIO(object):
     def __del__(self):  # pragma: no cover
         self.heartbeatThread.cancel()
         self.namespaceThread.cancel()
-        self.connection.close()
+        self.transport.close()
 
     def __connect(self):
         baseURL = '%s:%d/socket.io/%s' % (self.host, self.port, PROTOCOL)
@@ -84,15 +143,14 @@ class SocketIO(object):
         self.heartbeatTimeout = int(responseParts[1])
         self.connectionTimeout = int(responseParts[2])
         self.supportedTransports = responseParts[3].split(',')
-        if 'websocket' not in self.supportedTransports:
+        self.transport = make_transport(self.supportedTransports,
+                self.transports, self.secure, baseURL, self.sessionID)
+        if self.transport is None:
             raise SocketIOError('Could not parse handshake')  # pragma: no cover
-        socketURL = '%s://%s/websocket/%s' % (
-            'wss' if self.secure else 'ws', baseURL, self.sessionID)
-        self.connection = websocket.create_connection(socketURL)
 
     def _recv_packet(self):
         code, packetID, channelName, data = -1, None, None, None
-        packet = self.connection.recv()
+        packet = self.transport.recv()
         packetParts = packet.split(':', 3)
         packetCount = len(packetParts)
         if 4 == packetCount:
@@ -104,7 +162,7 @@ class SocketIO(object):
         return int(code), packetID, channelName, data
 
     def _send_packet(self, code, channelName='', data='', callback=None):
-        self.connection.send(':'.join([
+        self.transport.send(':'.join([
             str(code),
             self.set_callback(callback) if callback else '',
             channelName,
@@ -119,7 +177,7 @@ class SocketIO(object):
 
     @property
     def connected(self):
-        return self.connection.connected
+        return self.transport.connected()
 
     def connect(self, channelName, Namespace=BaseNamespace):
         channel = Channel(self, channelName, Namespace)

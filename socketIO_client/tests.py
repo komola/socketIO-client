@@ -47,6 +47,32 @@ class TestSocketIO(TestCase):
         self.assertNotEqual(chatSocket.namespace.payload, PAYLOAD)
         self.assertEqual(newsSocket.namespace.payload, PAYLOAD)
 
+class TestPollingSocketIO(TestCase):
+
+    def test_emit(self):
+        socketIO = SocketIO('localhost', 8000, Namespace, transports=['xhr-polling'])
+        socketIO.emit('aaa', PAYLOAD)
+        sleep(2)
+        self.assertEqual(socketIO.namespace.payload, PAYLOAD)
+
+    def test_events(self):
+        global ON_RESPONSE_CALLED
+        ON_RESPONSE_CALLED = False
+        socketIO = SocketIO('localhost', 8000, transports=['xhr-polling'])
+        socketIO.on('ddd', on_response)
+        socketIO.emit('aaa', PAYLOAD)
+        sleep(2)
+        self.assertEqual(ON_RESPONSE_CALLED, True)
+
+    def test_channels(self):
+        mainSocket = SocketIO('localhost', 8000, Namespace, transports=['xhr-polling'])
+        chatSocket = mainSocket.connect('/chat', Namespace)
+        newsSocket = mainSocket.connect('/news', Namespace)
+        newsSocket.emit('aaa', PAYLOAD)
+        sleep(2)
+        self.assertNotEqual(mainSocket.namespace.payload, PAYLOAD)
+        self.assertNotEqual(chatSocket.namespace.payload, PAYLOAD)
+        self.assertEqual(newsSocket.namespace.payload, PAYLOAD)
 
 class Namespace(BaseNamespace):
 
