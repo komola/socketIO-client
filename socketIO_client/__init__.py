@@ -3,11 +3,13 @@ import websocket
 from anyjson import dumps, loads
 from datetime import datetime
 from threading import Thread, Event
-from time import sleep, mktime
+from time import sleep, mktime, time
 from urllib import urlopen
+import cookielib
+import urllib2
 
 
-__version__ = '0.3'
+__version__ = '0.4'
 
 
 PROTOCOL = 1  # SocketIO protocol version
@@ -106,12 +108,14 @@ class SocketIO(object):
     messageID = 0
 
     def __init__(self, host, port, Namespace=BaseNamespace, secure=False,
-            transports=None):
+                 transports=None, session=None, **kwarg):
         self.host = host
         self.port = int(port)
         self.namespace = Namespace(self)
         self.secure = secure
         self.transports = transports
+        self.params = kwarg
+        self.session = session
         self.__connect()
 
         heartbeatInterval = self.heartbeatTimeout - 2
@@ -132,7 +136,13 @@ class SocketIO(object):
     def __connect(self):
         baseURL = '%s:%d/socket.io/%s' % (self.host, self.port, PROTOCOL)
         try:
-            response = urlopen('%s://%s/' % (
+            if self.session:
+                cj = cookielib.CookieJar()
+                opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj))
+                opener.addheaders.append(('Cookie', '%s' % self.session))
+            else:
+                opener = urllib2.build_opener()
+            response = opener.open('%s://%s/' % (
                 'https' if self.secure else 'http', baseURL))
         except IOError:  # pragma: no cover
             raise SocketIOError('Could not start connection')
