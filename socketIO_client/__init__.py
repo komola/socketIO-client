@@ -1,11 +1,13 @@
 import websocket
 from anyjson import dumps, loads
 from threading import Thread, Event
-from time import sleep
+from time import sleep, time
 from urllib import urlopen
+import cookielib
+import urllib2
 
 
-__version__ = '0.3'
+__version__ = '0.4'
 
 
 PROTOCOL = 1  # SocketIO protocol version
@@ -48,11 +50,16 @@ class SocketIO(object):
 
     messageID = 0
 
-    def __init__(self, host, port, Namespace=BaseNamespace, secure=False):
+    def __init__(self, host, port, Namespace=BaseNamespace, secure=False,
+                 **kwarg):
         self.host = host
         self.port = int(port)
         self.namespace = Namespace(self)
         self.secure = secure
+        self.params = kwarg
+        self.session = None
+        if 'session' in kwarg.keys():
+            self.session = kwarg['session']
         self.__connect()
 
         heartbeatInterval = self.heartbeatTimeout - 2
@@ -73,9 +80,15 @@ class SocketIO(object):
     def __connect(self):
         baseURL = '%s:%d/socket.io/%s' % (self.host, self.port, PROTOCOL)
         try:
-            response = urlopen('%s://%s/' % (
+            if self.session:
+                cj = cookielib.CookieJar()
+                opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj))
+                opener.addheaders.append(('Cookie', '%s' % self.session))
+            else:
+                opener = urllib2.build_opener()
+            response = opener.open('%s://%s/' % (
                 'https' if self.secure else 'http', baseURL))
-        except IOError:  # pragma: no cover
+        except IOError, err:  # pragma: no cover
             raise SocketIOError('Could not start connection')
         if 200 != response.getcode():  # pragma: no cover
             raise SocketIOError('Could not establish connection')
@@ -84,11 +97,12 @@ class SocketIO(object):
         self.heartbeatTimeout = int(responseParts[1])
         self.connectionTimeout = int(responseParts[2])
         self.supportedTransports = responseParts[3].split(',')
-        if 'websocket' not in self.supportedTransports:
+        if 'websocket' in self.supportedTransports:
+            socketURL = '%s://%s/websocket/%s' % (
+                'wss' if self.secure else 'ws', baseURL, self.sessionID)
+            self.connection = websocket.create_connection(socketURL)
+        else:
             raise SocketIOError('Could not parse handshake')  # pragma: no cover
-        socketURL = '%s://%s/websocket/%s' % (
-            'wss' if self.secure else 'ws', baseURL, self.sessionID)
-        self.connection = websocket.create_connection(socketURL)
 
     def _recv_packet(self):
         code, packetID, channelName, data = -1, None, None, None
