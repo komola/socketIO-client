@@ -28,6 +28,9 @@ class BaseNamespace(object):  # pragma: no cover
     def on_disconnect(self):
         pass
 
+    def on_noop(self):
+        pass
+
     def on_error(self, reason, advice):
         print '[Error] %s' % advice
 
@@ -317,6 +320,7 @@ class ListenerThread(Thread):
                     7: self.on_error,
                 }[code]
             except KeyError:
+                            8: self.on_noop,
                 continue
             delegate(packetID, channelName, data)
 
@@ -375,6 +379,10 @@ class ListenerThread(Thread):
         reason, advice = data.split('+', 1)
         callback = self.get_callback(channelName, 'error')
         callback(reason, advice)
+
+    def on_noop(self, packetID, channelName, data):
+        callback = self.get_callback(channelName, 'noop')
+        callback()
 
 
 class RhythmicThread(Thread):
