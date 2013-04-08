@@ -84,7 +84,7 @@ class WebsocketTransport(object):
     def send(self, packet):
         self.connection.send(packet)
 
-    def close(self):
+    def close(self, reconnect=None):
         self.connection.close()
 
     def recv(self):
@@ -151,6 +151,7 @@ class SocketIO(object):
         self.params = kwarg
         self.cookies = cookies
         self.__connect()
+        self.reconnect = False
 
         heartbeatInterval = self.heartbeatTimeout - 2
         self.heartbeatThread = RhythmicThread(heartbeatInterval,
@@ -162,16 +163,10 @@ class SocketIO(object):
         self.namespaceThread = ListenerThread(self)
         self.namespaceThread.start()
 
-    def reconnect(self):
+    def __del__(self, reconnect=False):  # pragma: no cover
         self.heartbeatThread.cancel()
         self.namespaceThread.cancel()
-        self.transport.close(reconnect=True)
-        self.__connect()
-
-    def __del__(self):  # pragma: no cover
-        self.heartbeatThread.cancel()
-        self.namespaceThread.cancel()
-        self.transport.close()
+        self.transport.close(reconnect)
 
     def __connect(self):
         baseURL = '%s:%d/socket.io/%s' % (self.host, self.port, PROTOCOL)
@@ -212,12 +207,13 @@ class SocketIO(object):
             channelName,
             data]))
 
-    def disconnect(self, channelName=''):
+    def disconnect(self, reconnect=False, channelName=''):
+        self.reconnect = reconnect
         self._send_packet(0, channelName)
         if channelName:
             del self.channelByName[channelName]
         else:
-            self.__del__()
+            self.__del__(reconnect=reconnect)
 
     @property
     def connected(self):
@@ -290,6 +286,7 @@ class SocketIO(object):
                 pass
             finally:
                 self.namespace.on_close()
+        return self.reconnect
 
 
 class Channel(object):
