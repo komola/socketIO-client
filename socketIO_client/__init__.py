@@ -98,8 +98,9 @@ class XhrPollingTransport(object):
         log.debug("XhrPollingTransport(%s, %s, %s)" % (secure, url, sessionID))
         self.url = '%s://%s/xhr-polling/%s' % ('https' if secure
                 else 'http', url, sessionID)
-        self.cookies = cookies
         self._connected = True
+        self.session = requests.Session()
+        self.session.cookies.update(cookies)
 
     def get_seconds_since_epoch(self):
         return int(mktime(datetime.now().timetuple()))
@@ -108,20 +109,33 @@ class XhrPollingTransport(object):
         return {'t':self.get_seconds_since_epoch()}
 
     def send(self, packet):
-        resp = requests.post(self.url, params=self.get_params(), data=packet,
-                             cookies=self.cookies)
+        resp = self.session.post(self.url, params=self.get_params(), data=packet)
         return resp
 
-    def close(self):
+    def close(self, reconnect=False):
+        log.debug("[Disconnecting] Please wait…")
         self._connected = False
+        if not reconnect:
+            params = self.get_params()
+            params.update({"disconnect": True})
+            resp = requests.get(self.url, params=params,
+                            cookies=self.session.cookies)
+            return resp.text
 
     def connected(self):
         return self._connected
 
     def recv(self):
-        resp = requests.get(self.url, params=self.get_params(),
-                            cookies=self.cookies)
-        return resp.text
+        resp = self.session.get(self.url, params=self.get_params())
+        if resp.text.encode('utf-8').startswith(u'\ufffd'.encode('utf-8')):
+            m = resp.text.encode('utf-8').split(u'\ufffd'.encode('utf-8'))
+            for l, d in zip(m[1::2], m[2::2]):
+                if len(d) != int(l):
+                    log.error("Invalid incoming message: declared %d chars, receipt %d chars" % (len(d), int(l)))
+                yield d
+            return
+        log.debug("recv(%s)" % resp.text[:15])
+        yield resp.text
 
 class SocketIO(object):
 
