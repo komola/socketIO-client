@@ -288,6 +288,8 @@ class SocketIO(object):
                     sleep(1)
             except KeyboardInterrupt:
                 pass
+            finally:
+                self.namespace.on_close()
 
 
 class Channel(object):
