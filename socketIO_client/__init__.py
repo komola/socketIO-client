@@ -162,6 +162,12 @@ class SocketIO(object):
         self.namespaceThread = ListenerThread(self)
         self.namespaceThread.start()
 
+    def reconnect(self):
+        self.heartbeatThread.cancel()
+        self.namespaceThread.cancel()
+        self.transport.close(reconnect=True)
+        self.__connect()
+
     def __del__(self):  # pragma: no cover
         self.heartbeatThread.cancel()
         self.namespaceThread.cancel()
