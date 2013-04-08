@@ -1,12 +1,11 @@
+import logging
+log = logging.getLogger('socketIO_client')
 import requests
 import websocket
 from anyjson import dumps, loads
 from datetime import datetime
 from threading import Thread, Event
-from time import sleep, mktime, time
-from urllib import urlopen
-import cookielib
-import urllib2
+from time import sleep, mktime
 
 
 __version__ = '0.4'
@@ -48,7 +47,12 @@ class BaseNamespace(object):  # pragma: no cover
         print '[Reconnect]', args
 
 
-def make_transport(supportedTransports, allowedTransports, secure, url, sessionID):
+def make_transport(supportedTransports, allowedTransports, secure, url, sessionID, **kwarg):
+    log.debug('make_transport(%s, %s, %s, %s, %s)' % (supportedTransports,
+                                                        allowedTransports,
+                                                        secure,
+                                                        url,
+                                                        sessionID))
     transportClassMap = {
         'websocket': WebsocketTransport,
         'xhr-polling': XhrPollingTransport,
@@ -57,11 +61,12 @@ def make_transport(supportedTransports, allowedTransports, secure, url, sessionI
         allowedTransports = ['websocket', 'xhr-polling']
     for transport in allowedTransports:
         if transport in supportedTransports and transport in transportClassMap:
-            return transportClassMap[transport](secure, url, sessionID)
+            return transportClassMap[transport](secure, url, sessionID, **kwarg)
 
 
 class WebsocketTransport(object):
-    def __init__(self, secure, url, sessionID):
+    def __init__(self, secure, url, sessionID, **kwarg):
+        log.debug("WebsocketTransport(%s, %s, %s)" % (secure, url, sessionID))
         socketURL = '%s://%s/websocket/%s' % (
             'wss' if secure else 'ws', url, sessionID)
         self.connection = websocket.create_connection(socketURL)
@@ -79,9 +84,12 @@ class WebsocketTransport(object):
         return self.connection.connected
 
 class XhrPollingTransport(object):
-    def __init__(self, secure, url, sessionID):
+    def __init__(self, secure, url, sessionID, cookies, **kwarg):
+        log.debug("XhrPollingTransport(%s, %s, %s)" % (secure, url, sessionID))
         self.url = '%s://%s/xhr-polling/%s' % ('https' if secure
                 else 'http', url, sessionID)
+        self.cookies = cookies
+        self._connected = True
 
     def get_seconds_since_epoch(self):
         return int(mktime(datetime.now().timetuple()))
@@ -90,17 +98,19 @@ class XhrPollingTransport(object):
         return {'t':self.get_seconds_since_epoch()}
 
     def send(self, packet):
-        resp = requests.post(self.url, params=self.get_params(), data=packet)
+        resp = requests.post(self.url, params=self.get_params(), data=packet,
+                             cookies=self.cookies)
         return resp
 
     def close(self):
-        pass
+        self._connected = False
 
     def connected(self):
-        return False
+        return self._connected
 
     def recv(self):
-        resp = requests.get(self.url, params=self.get_params())
+        resp = requests.get(self.url, params=self.get_params(),
+                            cookies=self.cookies)
         return resp.text
 
 class SocketIO(object):
@@ -108,14 +118,14 @@ class SocketIO(object):
     messageID = 0
 
     def __init__(self, host, port, Namespace=BaseNamespace, secure=False,
-                 transports=None, session=None, **kwarg):
+                 transports=None, cookies={}, **kwarg):
         self.host = host
         self.port = int(port)
         self.namespace = Namespace(self)
         self.secure = secure
         self.transports = transports
         self.params = kwarg
-        self.session = session
+        self.cookies = cookies
         self.__connect()
 
         heartbeatInterval = self.heartbeatTimeout - 2
@@ -135,26 +145,20 @@ class SocketIO(object):
 
     def __connect(self):
         baseURL = '%s:%d/socket.io/%s' % (self.host, self.port, PROTOCOL)
-        try:
-            if self.session:
-                cj = cookielib.CookieJar()
-                opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj))
-                opener.addheaders.append(('Cookie', '%s' % self.session))
-            else:
-                opener = urllib2.build_opener()
-            response = opener.open('%s://%s/' % (
-                'https' if self.secure else 'http', baseURL))
-        except IOError:  # pragma: no cover
-            raise SocketIOError('Could not start connection')
-        if 200 != response.getcode():  # pragma: no cover
+        response = requests.get('%s://%s/' % ('https' if self.secure else 'http',
+                                    baseURL), cookies=self.cookies)
+
+        if 200 != response.status_code:  # pragma: no cover
             raise SocketIOError('Could not establish connection')
-        responseParts = response.readline().split(':')
+        responseParts = response.text.split(':')
+
         self.sessionID = responseParts[0]
         self.heartbeatTimeout = int(responseParts[1])
         self.connectionTimeout = int(responseParts[2])
         self.supportedTransports = responseParts[3].split(',')
         self.transport = make_transport(self.supportedTransports,
-                self.transports, self.secure, baseURL, self.sessionID)
+                                        self.transports, self.secure, baseURL,
+                                        self.sessionID, cookies=self.cookies)
         if self.transport is None:
             raise SocketIOError('Could not parse handshake')  # pragma: no cover
 
