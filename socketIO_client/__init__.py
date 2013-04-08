@@ -68,6 +68,10 @@ def make_transport(supportedTransports, allowedTransports, secure, url, sessionI
     for transport in allowedTransports:
         if transport in supportedTransports and transport in transportClassMap:
             return transportClassMap[transport](secure, url, sessionID, **kwarg)
+    else:
+        raise SocketIOError('Could not negotiate a transport: ' \
+                            'locally(%s), remote(%s)' % (allowedTransports,
+                                                         supportedTransports))
 
 
 class WebsocketTransport(object):
