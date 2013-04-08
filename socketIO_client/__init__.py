@@ -88,7 +88,7 @@ class WebsocketTransport(object):
         self.connection.close()
 
     def recv(self):
-        return self.connection.recv()
+        yield self.connection.recv()
 
     def connected(self):
         return self.connection.connected
@@ -188,16 +188,16 @@ class SocketIO(object):
 
     def _recv_packet(self):
         code, packetID, channelName, data = -1, None, None, None
-        packet = self.transport.recv()
-        packetParts = packet.split(':', 3)
-        packetCount = len(packetParts)
-        if 4 == packetCount:
-            code, packetID, channelName, data = packetParts
-        elif 3 == packetCount:
-            code, packetID, channelName = packetParts
-        elif 1 == packetCount:  # pragma: no cover
-            code = packetParts[0]
-        return int(code), packetID, channelName, data
+        for packet in self.transport.recv():
+            packetParts = packet.split(':', 3)
+            packetCount = len(packetParts)
+            if 4 == packetCount:
+                code, packetID, channelName, data = packetParts
+            elif 3 == packetCount:
+                code, packetID, channelName = packetParts
+            elif 1 == packetCount:  # pragma: no cover
+                code = packetParts[0]
+            yield int(code), packetID, channelName, data
 
     def _send_packet(self, code, channelName='', data='', callback=None):
         self.transport.send(':'.join([
@@ -323,24 +323,25 @@ class ListenerThread(Thread):
     def run(self):
         while not self.done.is_set():
             try:
-                code, packetID, channelName, data = self.socketIO._recv_packet()
-            except:
-                continue
-            try:
-                delegate = {
-                    0: self.on_disconnect,
-                    1: self.on_connect,
-                    2: self.on_heartbeat,
-                    3: self.on_message,
-                    4: self.on_json,
-                    5: self.on_event,
-                    6: self.on_acknowledgment,
-                    7: self.on_error,
-                }[code]
-            except KeyError:
+                for code, packetID, channelName, data in self.socketIO._recv_packet():
+                    try:
+                        delegate = {
+                            0: self.on_disconnect,
+                            1: self.on_connect,
+                            2: self.on_heartbeat,
+                            3: self.on_message,
+                            4: self.on_json,
+                            5: self.on_event,
+                            6: self.on_acknowledgment,
+                            7: self.on_error,
                             8: self.on_noop,
+                        }[code]
+                    except KeyError:
+                        continue
+                    delegate(packetID, channelName, data)
+            except Exception, err:
+                log.exception(err)
                 continue
-            delegate(packetID, channelName, data)
 
     def cancel(self):
         self.done.set()
