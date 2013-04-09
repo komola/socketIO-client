@@ -152,10 +152,12 @@ class SocketIO(object):
         self.cookies = cookies
         self.__connect()
         self.reconnect = False
+        self.pause = Event()
+        self.pause.set()
 
         heartbeatInterval = self.heartbeatTimeout - 2
         self.heartbeatThread = RhythmicThread(heartbeatInterval,
-            self._send_heartbeat)
+            self._send_heartbeat, self.pause)
         self.heartbeatThread.start()
 
         self.channelByName = {}
@@ -288,6 +290,15 @@ class SocketIO(object):
                 self.namespace.on_close()
         return self.reconnect
 
+    def pause(self):
+        if self.pause.is_set():
+            self.pause.clear()
+        else:
+            self.pause.set()
+
+    def has_ended(self):
+        return not self.connected
+
 
 class Channel(object):
 
@@ -321,12 +332,14 @@ class ListenerThread(Thread):
         super(ListenerThread, self).__init__()
         self.socketIO = socketIO
         self.done = Event()
+        self.pause = socketIO.pause
         self.waitingForCallbacks = Event()
         self.callbackByMessageID = {}
         self.get_callback = self.socketIO.get_callback
 
     def run(self):
         while not self.done.is_set():
+            self.pause.wait()
             try:
                 for code, packetID, channelName, data in self.socketIO._recv_packet():
                     try:
@@ -414,17 +427,19 @@ class RhythmicThread(Thread):
 
     daemon = True
 
-    def __init__(self, intervalInSeconds, rhythmicFunction, *args, **kw):
+    def __init__(self, intervalInSeconds, rhythmicFunction, pause, *args, **kw):
         super(RhythmicThread, self).__init__()
         self.intervalInSeconds = intervalInSeconds
         self.rhythmicFunction = rhythmicFunction
         self.args = args
         self.kw = kw
         self.done = Event()
+        self.pause = pause
 
     def run(self):
         try:
             while not self.done.is_set():
+                self.pause.wait()
                 self.rhythmicFunction(*self.args, **self.kw)
                 self.done.wait(self.intervalInSeconds)
         except:
