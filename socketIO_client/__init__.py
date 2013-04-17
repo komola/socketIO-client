@@ -142,7 +142,7 @@ class SocketIO(object):
     messageID = 0
 
     def __init__(self, host, port, Namespace=BaseNamespace, secure=False,
-                 transports=None, cookies={}, **kwarg):
+                 transports=None, cookies={}, headers={}, **kwarg):
         self.host = host
         self.port = int(port)
         self.namespace = Namespace(self)
@@ -150,6 +150,7 @@ class SocketIO(object):
         self.transports = transports
         self.params = kwarg
         self.cookies = cookies
+        self.headers = headers
         self.__connect()
         self.reconnect = False
         self.pause = Event()
@@ -173,7 +174,7 @@ class SocketIO(object):
     def __connect(self):
         baseURL = '%s:%d/socket.io/%s' % (self.host, self.port, PROTOCOL)
         response = requests.get('%s://%s/' % ('https' if self.secure else 'http',
-                                    baseURL), cookies=self.cookies)
+                                    baseURL), cookies=self.cookies, headers=self.headers)
 
         if 200 != response.status_code:  # pragma: no cover
             raise SocketIOError('Could not establish connection')
